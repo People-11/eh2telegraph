@@ -2,7 +2,15 @@ use std::{collections::HashMap, env};
 
 use once_cell::sync::OnceCell;
 
+use serde::Deserialize;
+
 static CFG_PATH: OnceCell<String> = OnceCell::new();
+
+#[derive(serde::Deserialize)]
+pub struct WhitelistConfig {
+    pub enabled: bool,
+    pub ids: Vec<i64>,
+}
 
 lazy_static::lazy_static! {
     static ref CONFIG_MAPPING: HashMap<String, serde_yaml::Value> = {

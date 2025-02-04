@@ -25,3 +25,7 @@ worker_kv:
   token: xxx
   cache_size: 10240
   expire_sec: 5184000 # 60 days
+
+whitelist:
+  enabled: false # All ppl can use if false
+  ids: [123456, 789012] # You can send /id to bot to obtain this
