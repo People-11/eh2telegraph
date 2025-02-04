@@ -2,6 +2,7 @@ use std::{borrow::Cow, collections::HashSet};
 
 use eh2telegraph::{
     collector::{e_hentai::EHCollector, exhentai::EXCollector, nhentai::NHCollector},
+    config::{self, WhitelistConfig}, // Add whitelist
     searcher::{
         f_hash::FHashConvertor,
         saucenao::{SaucenaoOutput, SaucenaoParsed, SaucenaoSearcher},
@@ -65,6 +66,7 @@ pub struct Handler<C> {
     pub searcher: SaucenaoSearcher,
     pub convertor: FHashConvertor,
     pub admins: HashSet<i64>,
+    pub whitelist: HashSet<i64>,  // Add whitelist
 
     single_flight: singleflight_async::SingleFlight<String>,
 }
@@ -74,14 +76,54 @@ where
     C: KVStorage<String> + Send + Sync + 'static,
 {
     pub fn new(synchronizer: Synchronizer<C>, admins: HashSet<i64>) -> Self {
+        // Read whitelist
+        let whitelist = match config::parse::<WhitelistConfig>("whitelist")
+            .ok()
+            .and_then(|x| x) 
+        {
+            Some(config) => {
+                if config.enabled {
+                    // use ids in config
+                    config.ids.into_iter().collect()
+                } else {
+                    // Allow all ppl to use
+                    HashSet::from([i64::MIN])
+                }
+            }
+            None => {
+                // No white list, all ppl can use
+                HashSet::from([i64::MIN])
+            }
+        };  
+
         Self {
             synchronizer,
             searcher: SaucenaoSearcher::new_from_config(),
             convertor: FHashConvertor::new_from_config(),
             admins,
+            whitelist,
 
             single_flight: Default::default(),
         }
+    }
+
+    // Whitelist is allowed to use
+    fn is_allowed(&self, chat_id: i64) -> bool {
+        if self.admins.contains(&chat_id) {
+            return true;
+        }
+        if self.whitelist.contains(&i64::MIN) {
+            return true;
+        }
+        self.whitelist.contains(&chat_id)
+    }
+
+    // Add unauthorized response
+    async fn send_unauthorized(&self, bot: &DefaultParseMode<Bot>, msg: &Message) {
+        let _ = bot
+            .send_message(msg.chat.id, escape("User not authorized!"))
+            .reply_to_message_id(msg.id)
+            .await;
     }
 
     /// Executed when a command comes in and parsed successfully.
@@ -117,6 +159,11 @@ where
                     .await;
             }
             Command::Sync(url) => {
+                // Add white list check
+                if !self.is_allowed(msg.chat.id.0) {
+                    self.send_unauthorized(&bot, &msg).await;
+                    return ControlFlow::Break(());
+                }
                 if url.is_empty() {
                     let _ = bot
                         .send_message(msg.chat.id, escape("Usage: /sync url"))
@@ -170,6 +217,11 @@ where
         bot: DefaultParseMode<Bot>,
         msg: Message,
     ) -> ControlFlow<()> {
+        // Add white list check
+        if !self.is_allowed(msg.chat.id.0) {
+            self.send_unauthorized(&bot, &msg).await;
+            return ControlFlow::Break(());
+        }
         let maybe_link = {
             let entries = msg
                 .entities()
@@ -220,6 +272,11 @@ where
         bot: DefaultParseMode<Bot>,
         msg: Message,
     ) -> ControlFlow<()> {
+        // Add white list check
+        if !self.is_allowed(msg.chat.id.0) {
+            self.send_unauthorized(&bot, &msg).await;
+            return ControlFlow::Break(());
+        }
         let caption_entities = msg.caption_entities();
         let mut final_url = None;
         for entry in caption_entities.map(|x| x.iter()).into_iter().flatten() {
@@ -278,6 +335,11 @@ where
         bot: DefaultParseMode<Bot>,
         msg: Message,
     ) -> ControlFlow<()> {
+        // Add white list check
+        if !self.is_allowed(msg.chat.id.0) {
+            self.send_unauthorized(&bot, &msg).await;
+            return ControlFlow::Break(());
+        }
         let first_photo = match msg.photo().and_then(|x| x.first()) {
             Some(p) => p,
             None => {
